@@ -24,6 +24,7 @@
     "bignumber.js": "^9.1.2",
     "camelcase-keys": "^7.0.2",
     "crypto-js": "^4.2.0",
+    "esbuild-plugin-polyfill-node": "^0.3.0",
     "formstream": "^1.5.0",
     "snakecase-keys": "^8.0.0",
     "sse-decoder": "^1.0.0",
@@ -45,30 +46,14 @@
   },
   "repository": "git@github.com:alipay/alipay-sdk-nodejs-all.git",
   "license": "MIT",
-  "type": "module",
   "tshy": {
     "exports": {
       "./package.json": "./package.json",
       ".": "./src/index.ts"
     }
   },
-  "exports": {
-    "./package.json": "./package.json",
-    ".": {
-      "import": {
-        "types": "./dist/esm/index.d.ts",
-        "default": "./dist/esm/index.js"
-      },
-      "require": {
-        "types": "./dist/commonjs/index.d.ts",
-        "default": "./dist/commonjs/index.js"
-      }
-    }
-  },
   "files": [
     "dist",
     "src"
-  ],
-  "main": "./dist/commonjs/index.js",
-  "types": "./dist/commonjs/index.d.ts"
+  ]
 }
