@@ -5,12 +5,19 @@ import {YYYYMMDDHHmmss} from 'utility';
 import snakeCaseKeys from 'snakecase-keys';
 import CryptoJS from 'crypto-js';
 import type {AlipaySdkConfig} from './types.js';
+import forge, {pki} from "node-forge";
+import privateKeyFromPem = module
 
 const debug = console.log;
 
 export const ALIPAY_ALGORITHM_MAPPING = {
     RSA: 'RSA-SHA1',
     RSA2: 'RSA-SHA256',
+};
+
+export const ALIPAY_ALGORITHM_MAPPING_FORGE = {
+    RSA: 'sha1',
+    RSA2: 'sha256',
 };
 
 // https://opendocs.alipay.com/common/02mse3#NodeJS%20%E8%A7%A3%E5%AF%86%E7%A4%BA%E4%BE%8B
@@ -125,25 +132,37 @@ export function sign(method: string, params: Record<string, any>, config: Requir
         .join('&');
 
     // 计算签名
-    const algorithm = ALIPAY_ALGORITHM_MAPPING[config.signType];
-    decamelizeParams.sign = createSign(algorithm)
-        .update(signString, 'utf8').sign(config.privateKey, 'base64');
+    const algorithm = ALIPAY_ALGORITHM_MAPPING_FORGE[config.signType];
+    const md = forge.md[algorithm as 'sha1' | 'sha256'].create().update(signString, 'utf8');
+    const sign = config.privateKeyForge.sign(md);
+    decamelizeParams.sign = forge.util.encode64(sign);
     debug('algorithm: %s, signString: %o, sign: %o', algorithm, signString, decamelizeParams.sign);
     return decamelizeParams;
 }
 
 /** OpenAPI 3.0 签名，使用应用私钥签名 */
 export function signatureV3(signString: string, appPrivateKey: string) {
-    return createSign('RSA-SHA256')
-        .update(signString, 'utf-8')
-        .sign(appPrivateKey, 'base64');
+    const key = forge.pki.privateKeyFromPem(appPrivateKey);
+    return signatureV3Forge(signString, key);
+}
+
+export function signatureV3Forge(signString: string, appPrivateKey: forge.pki.rsa.PrivateKey) {
+    const md = forge.md.sha256.create();
+    md.update(signString, 'utf8');
+    const sign = appPrivateKey.sign(md);
+    return forge.util.encode64(sign);
 }
 
 /** OpenAPI 3.0 验签，使用支付宝公钥验证签名 */
 export function verifySignatureV3(signString: string, expectedSignature: string, alipayPublicKey: string) {
-    return createVerify('RSA-SHA256')
-        .update(signString, 'utf-8')
-        .verify(alipayPublicKey, expectedSignature, 'base64');
+    const key = forge.pki.publicKeyFromPem(alipayPublicKey);
+    return verifySignatureV3Forge(signString, expectedSignature, key);
+}
+
+export function verifySignatureV3Forge(signString: string, expectedSignature: string, alipayPublicKey: forge.pki.rsa.PublicKey) {
+    const md = forge.md.sha256.create();
+    md.update(signString, 'utf8');
+    return alipayPublicKey.verify(md.digest().bytes(), forge.util.decode64(expectedSignature));
 }
 
 export function createRequestId() {
