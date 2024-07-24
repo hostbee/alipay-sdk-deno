@@ -9,7 +9,7 @@ import {
     sign, ALIPAY_ALGORITHM_MAPPING, decamelize, createRequestId, readableToBytes,
     aesDecrypt, aesEncryptText,
     aesDecryptText,
-    verifySignatureV3, signatureV3Forge,
+    verifySignatureV3, signatureV3Forge, ALIPAY_ALGORITHM_MAPPING_FORGE,
 } from './util.js';
 import {getSNFromPath, getSN, loadPublicKey, loadPublicKeyFromPath} from './antcertutil.js';
 import forge from 'node-forge';
@@ -1058,6 +1058,7 @@ export class AlipaySdk {
 
         // 未设置“支付宝公钥”或签名字符串不存，验签不通过
         if (!this.config.alipayPublicKey || !signStr) {
+            debug('未设置“支付宝公钥”或签名字符串不存，验签不通过');
             return false;
         }
 
@@ -1105,7 +1106,9 @@ export class AlipaySdk {
      * 如对前端返回的报文进行验签 https://opendocs.alipay.com/common/02mse3#AES%20%E8%A7%A3%E5%AF%86%E5%87%BD%E6%95%B0
      */
     rsaCheck(signContent: string, sign: string, signType: AlipaySdkSignType = 'RSA2') {
-        const verifier = createVerify(ALIPAY_ALGORITHM_MAPPING[signType]);
-        return verifier.update(signContent, 'utf-8').verify(this.config.alipayPublicKey, sign, 'base64');
+        const key = forge.pki.publicKeyFromPem(this.config.alipayPublicKey);
+        const algorithm = ALIPAY_ALGORITHM_MAPPING_FORGE[signType];
+        const md = forge.md[algorithm as 'sha1' | 'sha256'].create().update(signContent, 'utf8');
+        return key.verify(md.digest().bytes(), forge.util.decode64(sign))
     }
 }
