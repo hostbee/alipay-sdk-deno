@@ -61,6 +61,7 @@ export function aesDecrypt(encryptedText: string, aesKey: string): object {
 interface SignOptions {
     /** 是否对 bizContent 做 SnakeCase 转换，默认 true */
     bizContentAutoSnakeCase?: boolean;
+    removeBizContentContentInSignature?: boolean;
 }
 
 /**
@@ -120,6 +121,12 @@ export function sign(method: string, params: Record<string, any>, config: Requir
     const decamelizeParams: Record<string, any> = snakeCaseKeys(signParams);
     // 排序
     // ignore biz_content
+
+    if (options?.removeBizContentContentInSignature) {
+        delete decamelizeParams.biz_content;
+        delete decamelizeParams.encrypt_type;
+    }
+
     const signString = Object.keys(decamelizeParams).sort()
         .map(key => {
             let data = decamelizeParams[key];
@@ -130,6 +137,7 @@ export function sign(method: string, params: Record<string, any>, config: Requir
             return `${key}=${data}`;
         })
         .join('&');
+    console.log('signString:', signString, decamelizeParams);
 
     // 计算签名
     const algorithm = ALIPAY_ALGORITHM_MAPPING_FORGE[config.signType];

@@ -138,6 +138,7 @@ export interface IRequestOption {
      * @see https://opendocs.alipay.com/open-v3/054oog?pathHash=7834d743#%E8%AF%B7%E6%B1%82%E7%9A%84%E5%94%AF%E4%B8%80%E6%A0%87%E8%AF%86
      */
     traceId?: string;
+    removeBizContentContentInSignature?: boolean;
 }
 
 export interface AlipayCURLOptions {
@@ -894,29 +895,42 @@ export class AlipaySdk {
 
         const config = this.config;
         // 计算签名
-        const signParams = sign(method, params, config);
+        const signParams = sign(method, params, config, {
+            removeBizContentContentInSignature: options.removeBizContentContentInSignature,
+        });
         const {url, execParams} = this.formatUrl(config.gateway, signParams);
         debug('start exec, url: %s, method: %s, params: %o',
             url, method, execParams);
 
-        let httpResponse: HttpClientResponse<string>;
+        let httpResponse: Response;
         try {
-            httpResponse = await urllib.request(url, {
+            // httpResponse = await urllib.request(url, {
+            //     method: 'POST',
+            //     data: execParams,
+            //     // 按 text 返回（为了验签）
+            //     dataType: 'text',
+            //     timeout: config.timeout,
+            //     headers: {
+            //         'user-agent': this.version,
+            //         'alipay-request-id': options.traceId ?? createRequestId(),
+            //         // 请求须设置 HTTP 头部： Content-Type: application/json, Accept: application/json
+            //         // 加密请求和文件上传 API 除外。
+            //         // 'content-type': 'application/json',
+            //         accept: 'application/json',
+            //     },
+            //     dispatcher: this.#proxyAgent,
+            // });
+            httpResponse = await fetch(url, {
                 method: 'POST',
-                data: execParams,
-                // 按 text 返回（为了验签）
-                dataType: 'text',
-                timeout: config.timeout,
+                body: JSON.stringify(execParams),
                 headers: {
                     'user-agent': this.version,
                     'alipay-request-id': options.traceId ?? createRequestId(),
-                    // 请求须设置 HTTP 头部： Content-Type: application/json, Accept: application/json
-                    // 加密请求和文件上传 API 除外。
-                    // 'content-type': 'application/json',
+                    'content-type': params.needEncrypt ? 'text/plain' : 'application/json',
                     accept: 'application/json',
                 },
-                dispatcher: this.#proxyAgent,
-            });
+                // timeout and dispatcher
+            })
         } catch (err: any) {
             debug('HttpClient Request error: %s', err);
             throw new AlipayRequestError(`HttpClient Request error: ${err.message}`, {
@@ -930,18 +944,19 @@ export class AlipaySdk {
         });
     }
 
-    #formatExecHttpResponse(method: string, httpResponse: HttpClientResponse<string>, options: {
+    async #formatExecHttpResponse(method: string, httpResponse: Response, options: {
         needEncrypt?: boolean;
         validateSign?: boolean;
     }) {
+        const httpResponseData = await httpResponse.text();
         debug('http response status: %s, headers: %j, raw text: %o',
-            httpResponse.status, httpResponse.headers, httpResponse.data);
-        const traceId = httpResponse.headers.trace_id as string;
+            httpResponse.status, httpResponse.headers, httpResponseData);
+        const traceId = httpResponse.headers.get('trace_id') as string;
 
         if (httpResponse.status !== 200) {
             throw new AlipayRequestError(`HTTP 请求错误, status: ${httpResponse.status}`, {
                 traceId,
-                responseDataRaw: httpResponse.data,
+                responseDataRaw: httpResponseData,
             });
         }
 
@@ -967,11 +982,11 @@ export class AlipaySdk {
          */
         let alipayResponse: Record<string, any>;
         try {
-            alipayResponse = JSON.parse(httpResponse.data);
+            alipayResponse = JSON.parse(httpResponseData);
         } catch (err) {
             throw new AlipayRequestError('Response 格式错误', {
                 traceId,
-                responseDataRaw: httpResponse.data,
+                responseDataRaw: httpResponseData,
                 cause: err,
             });
         }
@@ -991,7 +1006,7 @@ export class AlipaySdk {
             // 按字符串验签
             if (options?.validateSign) {
                 const serverSign = alipayResponse.sign;
-                this.checkResponseSign(httpResponse.data, responseKey, serverSign, traceId);
+                this.checkResponseSign(httpResponseData, responseKey, serverSign, traceId);
             }
             const result: AlipaySdkCommonResult = this.config.camelcase ? camelcaseKeys(data, {deep: true}) : data;
             if (result && traceId) {
@@ -1002,7 +1017,7 @@ export class AlipaySdk {
 
         throw new AlipayRequestError(`Response 格式错误，返回值 ${responseKey} 找不到`, {
             traceId,
-            responseDataRaw: httpResponse.data,
+            responseDataRaw: httpResponseData,
         });
     }
 
@@ -1024,10 +1039,12 @@ export class AlipaySdk {
 
         // 根据服务端返回的结果截取需要验签的目标字符串
         const validateStr = this.getSignStr(responseDataRaw, responseKey);
+
         // 参数存在，并且是正常的结果（不包含 sub_code）时才验签
-        const verifier = createVerify(ALIPAY_ALGORITHM_MAPPING[this.config.signType]);
-        verifier.update(validateStr, 'utf8');
-        const success = verifier.verify(this.config.alipayPublicKey, serverSign, 'base64');
+        const key = forge.pki.publicKeyFromPem(this.config.alipayPublicKey);
+        const algorithm = ALIPAY_ALGORITHM_MAPPING_FORGE[this.config.signType];
+        const md = forge.md[algorithm as 'sha1' | 'sha256'].create().update(validateStr, 'utf8');
+        const success = key.verify(md.digest().bytes(), forge.util.decode64(serverSign))
         if (!success) {
             throw new AlipayRequestError(`验签失败，服务端返回的 sign: '${serverSign}' 无效, validateStr: '${validateStr}'`, {
                 traceId,
